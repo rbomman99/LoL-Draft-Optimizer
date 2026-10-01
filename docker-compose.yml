@@ -1,26 +1,43 @@
-version: '3.8'
-
 services:
   db:
-    image: postgres:latest
+    image: postgres:16
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: secret
-      POSTGRES_DB: draft_optimizer
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-draft_optimizer}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   api:
     build: .
-    ports:
-      - "8000:8000"
-    depends_on:
-      - db
+    profiles: ["app"]
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
-      - DATABASE_URL=postgresql://admin:secret@db:5432/draft_optimizer
-      - RIOT_API_KEY=your_api_key_here
+      MODEL_PATH: /app/artifacts/draft/model.pt
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./artifacts:/app/artifacts:ro
+
+  worker:
+    build: .
+    profiles: ["tools"]
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # Inside Docker, use the service hostname rather than localhost.
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-draft_optimizer}
+    volumes:
+      - ./artifacts:/app/artifacts
 
 volumes:
   postgres_data:
